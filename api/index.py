@@ -4,9 +4,9 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from urllib.parse import unquote
-from mangum import Mangum
 
-app = FastAPI(title="RoutineAI Local Backend")
+# Vercel uses `app` (ASGI) directly; Mangum not needed for serverless
+app = FastAPI(title="RoutineAI API")
 
 # Enable CORS
 app.add_middleware(
@@ -77,34 +77,38 @@ async def get_recording(filename: str):
 
 @app.post("/api/generate-animation")
 @app.post("/generate-animation")
-async def generate_animation(prompt: str = Query(..., description="Step text to match to a video")):
+async def generate_animation(prompt: str = Query(default="", description="Step text to match to a video")):
     """Match prompt to a pre-recorded video. No external models – prompt-to-video mapping only."""
-    pl = (prompt or "").lower().strip()
-    fname = None
-    for keyword, video_file in sorted(PROMPT_TO_VIDEO.items(), key=lambda x: -len(x[0])):
-        if keyword in pl:
-            fname = video_file
-            break
-    if not fname:
-        words = [w for w in pl.replace(".", " ").replace(",", " ").split() if len(w) >= 3]
-        for word in words:
-            for keyword, video_file in PROMPT_TO_VIDEO.items():
-                if word in keyword:
-                    fname = video_file
-                    break
-            if fname:
+    try:
+        pl = (prompt or "").lower().strip()
+        fname = None
+        for keyword, video_file in sorted(PROMPT_TO_VIDEO.items(), key=lambda x: -len(x[0])):
+            if keyword in pl:
+                fname = video_file
                 break
-    if not fname:
-        raise HTTPException(
-            status_code=404,
-            detail="No video found for this step. Try phrases like 'wake up', 'brush teeth', 'get dressed', 'eat breakfast', 'read a book'.",
-        )
-    file_path = os.path.join(RECORDINGS_DIR, fname)
-    if not os.path.isfile(file_path):
-        raise HTTPException(
-            status_code=404,
-            detail="Video file not available on this server. Add recordings to the api/recordings folder.",
-        )
-    return {"video_path": f"/api/recordings/{fname}"}
-
-handler = Mangum(app)
+        if not fname:
+            words = [w for w in pl.replace(".", " ").replace(",", " ").split() if len(w) >= 3]
+            for word in words:
+                for keyword, video_file in PROMPT_TO_VIDEO.items():
+                    if word in keyword:
+                        fname = video_file
+                        break
+                if fname:
+                    break
+        if not fname:
+            raise HTTPException(
+                status_code=404,
+                detail="No video found for this step. Try phrases like 'wake up', 'brush teeth', 'get dressed', 'eat breakfast', 'read a book'.",
+            )
+        file_path = os.path.join(RECORDINGS_DIR, fname)
+        if not os.path.isfile(file_path):
+            raise HTTPException(
+                status_code=404,
+                detail="Video file not available on this server. Add recordings to the api/recordings folder.",
+            )
+        return {"video_path": f"/api/recordings/{fname}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.exception("generate_animation error")
+        raise HTTPException(status_code=500, detail=str(e))
